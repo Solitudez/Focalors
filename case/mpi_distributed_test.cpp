@@ -1,8 +1,8 @@
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <mpi.h>
 #include <vector>
-#include <iomanip>
 
 #include "base/location_boundary.h"
 #include "pe_mpi_distributed/d_domain_2d.h"
@@ -14,39 +14,54 @@
 // f(x, y) = -2*pi^2 * sin(pi*x) * sin(pi*y)
 // Domain: [0, 1] x [0, 1]
 
-void gather_and_print(DField2D& f, DDomain2D& domain, std::string name, int nx, int ny, int rank, int size) {
+void gather_and_print(DField2D& f, DDomain2D& domain, std::string name, int nx, int ny, int rank, int size)
+{
     field2& local_data = f.get_local_data();
-    int local_nx = domain.get_local_nx();
-    
+    int     local_nx   = domain.get_local_nx();
+
     std::vector<double> send_buf;
     send_buf.reserve(local_nx * ny);
-    for(int i=0; i<local_nx; ++i) {
-        for(int j=0; j<ny; ++j) {
+    for (int i = 0; i < local_nx; ++i)
+    {
+        for (int j = 0; j < ny; ++j)
+        {
             send_buf.push_back(local_data(i, j));
         }
     }
 
     std::vector<int> recv_counts(size);
-    int send_count = local_nx * ny;
+    int              send_count = local_nx * ny;
     MPI_Gather(&send_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
 
     std::vector<int> displs(size);
-    if (rank == 0) {
+    if (rank == 0)
+    {
         displs[0] = 0;
-        for(int i=1; i<size; ++i) displs[i] = displs[i-1] + recv_counts[i-1];
+        for (int i = 1; i < size; ++i)
+            displs[i] = displs[i - 1] + recv_counts[i - 1];
     }
 
     std::vector<double> recv_buf;
-    if (rank == 0) recv_buf.resize(nx * ny);
+    if (rank == 0)
+        recv_buf.resize(nx * ny);
 
-    MPI_Gatherv(send_buf.data(), send_count, MPI_DOUBLE, 
-                recv_buf.data(), recv_counts.data(), displs.data(), MPI_DOUBLE, 
-                0, MPI_COMM_WORLD);
+    MPI_Gatherv(send_buf.data(),
+                send_count,
+                MPI_DOUBLE,
+                recv_buf.data(),
+                recv_counts.data(),
+                displs.data(),
+                MPI_DOUBLE,
+                0,
+                MPI_COMM_WORLD);
 
-    if (rank == 0) {
+    if (rank == 0)
+    {
         std::cout << name << " = [" << std::endl;
-        for(int i=0; i<nx; ++i) {
-            for(int j=0; j<ny; ++j) {
+        for (int i = 0; i < nx; ++i)
+        {
+            for (int j = 0; j < ny; ++j)
+            {
                 std::cout << std::setw(12) << recv_buf[i * ny + j] << " ";
             }
             std::cout << ";" << std::endl;
@@ -126,7 +141,7 @@ int main(int argc, char* argv[])
         {
             double y     = (j + 0.5) * hy;
             double exact = std::sin(pi * x) * std::sin(pi * y);
-            double diff  = f_local(i, j) - exact;
+            double diff  = f_local(i, j) * hx * hy - exact;
             local_error_sq += diff * diff;
         }
     }
@@ -176,7 +191,7 @@ if exist('Result', 'var')
     error_diff = Result - U_exact;
     l2_error = norm(error_diff, 'fro') * sqrt(hx * hy);
     fprintf('Solution L2 Error: %e\n', l2_error);
-    
+
     figure;
     subplot(1,3,1); imagesc(Result); title('Computed Solution'); colorbar;
     subplot(1,3,2); imagesc(U_exact); title('Exact Solution'); colorbar;
