@@ -7,6 +7,7 @@
 #include "io/config.h"
 #include "io/csv_writer_2d.h"
 #include "ns/ns_solver2d.h"
+#include "poisson_base/io/progress_bar.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -209,13 +210,18 @@ int main(int argc, char* argv[])
     // IO::var_to_csv(p, nowtime_dir + "/p_step_" + std::to_string(0));
 
     // Solve
+    IO::ProgressBar pb(time_config->num_iterations, 50, 100);
+    std::cout << "Starting simulation with " << time_config->num_iterations << " iterations..." << std::endl;
+
     for (int step = 1; step <= time_config->num_iterations; step++)
     {
+        pb.update(step);
+
         // 只在前5步和每200步输出残差
         if (step % 200 == 0 || step <= 5)
         {
             env_config->showGmresRes = true;
-            std::cout << "step: " << step << "/" << time_config->num_iterations << "\n";
+            // std::cout << "step: " << step << "/" << time_config->num_iterations << "\n";
         }
         else
         {
@@ -239,6 +245,7 @@ int main(int argc, char* argv[])
             return -1;
         }
     }
+    pb.finish();
     std::cout << "Simulation finished." << std::endl;
     IO::var_to_csv_full(u, nowtime_dir + "final/u_" + std::to_string(time_config->num_iterations));
     IO::var_to_csv_full(v, nowtime_dir + "final/v_" + std::to_string(time_config->num_iterations));

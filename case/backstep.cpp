@@ -10,6 +10,7 @@
 #include "io/csv_writer_2d.h"
 
 #include "pe/concat/concat_solver2d.h"
+#include "poisson_base/io/progress_bar.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -127,14 +128,17 @@ int main(int argc, char* argv[])
 
     ConcatNSSolver2D solver(&u, &v, &p, time_config, physics_config, env_config);
 
+    std::cout << "Starting simulation with " << time_config->num_iterations << " iterations..." << std::endl;
+    IO::ProgressBar pb(time_config->num_iterations, 50, 200);
+
     for (int iter = 0; iter < time_config->num_iterations; iter++)
     {
-        if (iter % 200 == 0)
-            std::cout << "iter: " << iter << "/" << time_config->num_iterations << "\n";
+        pb.update();
 
         ConcatNSSolver2D ns_solver(&u, &v, &p, time_config, physics_config, env_config);
         ns_solver.solve();
     }
+    pb.finish();
 
     IO::var_to_csv(u, "result/u");
     IO::var_to_csv(v, "result/v");
