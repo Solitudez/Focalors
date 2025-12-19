@@ -8,6 +8,7 @@
 
 #include "io/config.h"
 #include "io/csv_writer_2d.h"
+#include "io/progress_bar.h"
 
 #include "pe/concat/concat_solver2d.h"
 #include <algorithm>
@@ -127,14 +128,16 @@ int main(int argc, char* argv[])
 
     ConcatNSSolver2D solver(&u, &v, &p, time_config, physics_config, env_config);
 
+    IO::ProgressBar progress_bar(time_config->num_iterations);
     for (int iter = 0; iter < time_config->num_iterations; iter++)
     {
-        if (iter % 200 == 0)
-            std::cout << "iter: " << iter << "/" << time_config->num_iterations << "\n";
+        if (iter % 50 == 0)
+            progress_bar.update(iter);
 
         ConcatNSSolver2D ns_solver(&u, &v, &p, time_config, physics_config, env_config);
         ns_solver.solve();
     }
+    progress_bar.update(time_config->num_iterations);
 
     IO::var_to_csv(u, "result/u");
     IO::var_to_csv(v, "result/v");
