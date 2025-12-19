@@ -128,6 +128,14 @@ void ConcatNSSolver2D::euler_conv_diff_inner()
         double hx = domain->hx;
         double hy = domain->hy;
 
+        // Optimization: Precompute inverse values to replace division with multiplication
+        double inv_hx = 1.0 / hx;
+        double inv_hy = 1.0 / hy;
+        double inv_hx2 = inv_hx * inv_hx;
+        double inv_hy2 = inv_hy * inv_hy;
+        double factor_x = 0.25 * inv_hx;
+        double factor_y = 0.25 * inv_hy;
+
         // u (interior only; boundaries handled in euler_conv_diff_outer)
         OPENMP_PARALLEL_FOR()
         for (int i = 1; i < nx - 1; i++)
@@ -138,10 +146,10 @@ void ConcatNSSolver2D::euler_conv_diff_inner()
                     u(i + 1, j) * (u(i + 1, j) + 2.0 * u(i, j)) - u(i - 1, j) * (u(i - 1, j) + 2.0 * u(i, j));
                 double conv_y = (u(i, j) + u(i, j + 1)) * (v(i - 1, j + 1) + v(i, j + 1)) -
                                 (u(i, j - 1) + u(i, j)) * (v(i - 1, j) + v(i, j));
-                double diff = (u(i + 1, j) + u(i - 1, j) - 2.0 * u(i, j)) / hx / hx +
-                              (u(i, j + 1) + u(i, j - 1) - 2.0 * u(i, j)) / hy / hy;
+                double diff = (u(i + 1, j) + u(i - 1, j) - 2.0 * u(i, j)) * inv_hx2 +
+                              (u(i, j + 1) + u(i, j - 1) - 2.0 * u(i, j)) * inv_hy2;
 
-                u_temp(i, j) = u(i, j) - dt * (0.25 / hx * conv_x + 0.25 / hy * conv_y - nu * diff);
+                u_temp(i, j) = u(i, j) - dt * (factor_x * conv_x + factor_y * conv_y - nu * diff);
             }
         }
 
@@ -155,10 +163,10 @@ void ConcatNSSolver2D::euler_conv_diff_inner()
                                 (v(i - 1, j) + v(i, j)) * (u(i, j - 1) + u(i, j));
                 double conv_y =
                     v(i, j + 1) * (v(i, j + 1) + 2.0 * v(i, j)) - v(i, j - 1) * (v(i, j - 1) + 2.0 * v(i, j));
-                double diff = (v(i + 1, j) + v(i - 1, j) - 2.0 * v(i, j)) / hx / hx +
-                              (v(i, j + 1) + v(i, j - 1) - 2.0 * v(i, j)) / hy / hy;
+                double diff = (v(i + 1, j) + v(i - 1, j) - 2.0 * v(i, j)) * inv_hx2 +
+                              (v(i, j + 1) + v(i, j - 1) - 2.0 * v(i, j)) * inv_hy2;
 
-                v_temp(i, j) = v(i, j) - dt * (0.25 / hx * conv_x + 0.25 / hy * conv_y - nu * diff);
+                v_temp(i, j) = v(i, j) - dt * (factor_x * conv_x + factor_y * conv_y - nu * diff);
             }
         }
     }
@@ -175,6 +183,14 @@ void ConcatNSSolver2D::euler_conv_diff_outer()
 
         double hx = domain->hx;
         double hy = domain->hy;
+
+        // Optimization: Precompute inverse values
+        double inv_hx = 1.0 / hx;
+        double inv_hy = 1.0 / hy;
+        double inv_hx2 = inv_hx * inv_hx;
+        double inv_hy2 = inv_hy * inv_hy;
+        double factor_x = 0.25 * inv_hx;
+        double factor_y = 0.25 * inv_hy;
 
         double* v_left_buffer  = v_buffer_map[domain][LocationType::Left];
         double* v_right_buffer = v_buffer_map[domain][LocationType::Right];
@@ -203,9 +219,9 @@ void ConcatNSSolver2D::euler_conv_diff_outer()
 
             double u_conv_x = u_right * (u_right + 2.0 * u(i, j)) - u_left * (u_left + 2.0 * u(i, j));
             double u_conv_y = (u(i, j) + u_up) * (v_left_up + v_up) - (u_down + u(i, j)) * (v_left + v(i, j));
-            double u_diff   = (u_right + u_left - 2.0 * u(i, j)) / hx / hx + (u_up + u_down - 2.0 * u(i, j)) / hy / hy;
+            double u_diff   = (u_right + u_left - 2.0 * u(i, j)) * inv_hx2 + (u_up + u_down - 2.0 * u(i, j)) * inv_hy2;
 
-            u_temp(i, j) = u(i, j) - dt * (0.25 / hx * u_conv_x + 0.25 / hy * u_conv_y - nu * u_diff);
+            u_temp(i, j) = u(i, j) - dt * (factor_x * u_conv_x + factor_y * u_conv_y - nu * u_diff);
         };
 
         auto bound_cal_v = [&](int i, int j) {
@@ -222,9 +238,9 @@ void ConcatNSSolver2D::euler_conv_diff_outer()
 
             double v_conv_x = (v(i, j) + v_right) * (u_right_down + u_right) - (v_left + v(i, j)) * (u_down + u(i, j));
             double v_conv_y = v_up * (v_up + 2.0 * v(i, j)) - v_down * (v_down + 2.0 * v(i, j));
-            double v_diff   = (v_right + v_left - 2.0 * v(i, j)) / hx / hx + (v_up + v_down - 2.0 * v(i, j)) / hy / hy;
+            double v_diff   = (v_right + v_left - 2.0 * v(i, j)) * inv_hx2 + (v_up + v_down - 2.0 * v(i, j)) * inv_hy2;
 
-            v_temp(i, j) = v(i, j) - dt * (0.25 / hx * v_conv_x + 0.25 / hy * v_conv_y - nu * v_diff);
+            v_temp(i, j) = v(i, j) - dt * (factor_x * v_conv_x + factor_y * v_conv_y - nu * v_diff);
         };
 
         // Left
