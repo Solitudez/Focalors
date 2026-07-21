@@ -2,6 +2,7 @@
 #include "common.h"
 
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -67,6 +68,7 @@ namespace IO
             std::cerr << "Failed to open file: " << filename + ".csv" << std::endl;
             return false;
         }
+        outfile << std::setprecision(17);
 
         for (int i = 0; i < nx; i++)
         {
@@ -106,6 +108,7 @@ namespace IO
             std::cerr << "Failed to open file: " << filename + ".csv" << std::endl;
             return false;
         }
+        outfile << std::setprecision(17);
 
         for (int i = 0; i < field.get_nx(); i++)
         {
@@ -191,9 +194,9 @@ namespace IO
             std::string line;
             while (std::getline(infile, line))
             {
-                std::stringstream      ss(line);
-                std::string            value;
-                std::vector<double>    row;
+                std::stringstream   ss(line);
+                std::string         value;
+                std::vector<double> row;
                 while (std::getline(ss, value, ','))
                 {
                     try
@@ -260,7 +263,7 @@ namespace IO
                 field2& field = *var.field_map.at(domain);
                 zero_buffers(var, domain);
 
-                const std::string file_path = filename + "_" + domain->name + ".csv";
+                const std::string                file_path = filename + "_" + domain->name + ".csv";
                 std::vector<std::vector<double>> rows;
                 if (!read_matrix(file_path, rows))
                     return false;
@@ -281,7 +284,8 @@ namespace IO
                     return true;
                 };
 
-                if (var.position_type == VariablePositionType::Center || var.position_type == VariablePositionType::Corner)
+                if (var.position_type == VariablePositionType::Center ||
+                    var.position_type == VariablePositionType::Corner)
                 {
                     if (static_cast<int>(rows.size()) != field_nx)
                     {
@@ -384,6 +388,7 @@ namespace IO
             std::cerr << "Failed to open file: " << filename + ".csv" << std::endl;
             return false;
         }
+        outfile << std::setprecision(17);
 
         int nx = field.get_nx();
         int ny = field.get_ny();
