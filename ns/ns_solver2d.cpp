@@ -91,9 +91,7 @@ void ConcatNSSolver2D::raw_vorticity_update(Variable2D& vorticity_var) const
     raw_vorticity_update(*u_var, *v_var, vorticity_var);
 }
 
-void ConcatNSSolver2D::raw_vorticity_update(const Variable2D& u_var,
-                                            const Variable2D& v_var,
-                                            Variable2D&       vorticity_var)
+void ConcatNSSolver2D::raw_vorticity_update(const Variable2D& u_var, const Variable2D& v_var, Variable2D& vorticity_var)
 {
     if (u_var.geometry == nullptr || v_var.geometry == nullptr || vorticity_var.geometry == nullptr)
         throw std::runtime_error("raw_vorticity_update: variables must have geometry");
@@ -114,12 +112,12 @@ void ConcatNSSolver2D::raw_vorticity_update(const Variable2D& u_var,
 
         const int nx = domain->get_nx();
         const int ny = domain->get_ny();
-        if (u.get_nx() != nx || u.get_ny() != ny || v.get_nx() != nx || v.get_ny() != ny ||
-            omega.get_nx() != nx || omega.get_ny() != ny)
+        if (u.get_nx() != nx || u.get_ny() != ny || v.get_nx() != nx || v.get_ny() != ny || omega.get_nx() != nx ||
+            omega.get_ny() != ny)
             throw std::runtime_error("raw_vorticity_update: field size mismatch on domain " + domain->name);
 
-        const double hx = domain->get_hx();
-        const double hy = domain->get_hy();
+        const double hx            = domain->get_hx();
+        const double hy            = domain->get_hy();
         double*      v_xneg_buffer = v_var.buffer_map.at(domain).at(LocationType::XNegative);
         double*      u_yneg_buffer = u_var.buffer_map.at(domain).at(LocationType::YNegative);
 
@@ -130,7 +128,7 @@ void ConcatNSSolver2D::raw_vorticity_update(const Variable2D& u_var,
             {
                 const double v_left = i == 0 ? v_xneg_buffer[j] : v(i - 1, j);
                 const double u_down = j == 0 ? u_yneg_buffer[i] : u(i, j - 1);
-                omega(i, j) = (v(i, j) - v_left) / hx - (u(i, j) - u_down) / hy;
+                omega(i, j)         = (v(i, j) - v_left) / hx - (u(i, j) - u_down) / hy;
             }
         }
     }
