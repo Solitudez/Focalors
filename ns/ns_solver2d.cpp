@@ -147,6 +147,12 @@ void ConcatNSSolver2D::solve()
     // MHD: predictor step finished, before div(u) boundary update
     if (physics_cfg.enable_mhd && mhd_module)
     {
+        // The predictor swaps u/v field storage. Rebuild every physical,
+        // shared, and diagonal velocity boundary before reconstructing current.
+        phys_boundary_update();
+        nondiag_shared_boundary_update();
+        diag_shared_boundary_update();
+
         mhd_module->solveElectricPotential();
         mhd_module->updateCurrentDensity();
         mhd_module->applyLorentzForce();
