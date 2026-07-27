@@ -23,6 +23,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -81,8 +82,8 @@ namespace
                 EXPLICIT_DIFFUSION_DT_FACTOR * h * h / selection.viscosity_upper_bound_effective;
         }
 
-        selection.magnetic_factor_sq = physics_cfg.Bx * physics_cfg.Bx + physics_cfg.By * physics_cfg.By +
-                                       physics_cfg.Bz * physics_cfg.Bz;
+        selection.magnetic_factor_sq =
+            physics_cfg.Bx * physics_cfg.Bx + physics_cfg.By * physics_cfg.By + physics_cfg.Bz * physics_cfg.Bz;
         if (std::abs(physics_cfg.Ha) > 0.0 && selection.magnetic_factor_sq > 0.0 && physics_cfg.Re > 0.0)
         {
             selection.magnetic_dt_limit =
@@ -134,10 +135,8 @@ namespace
 
     std::string to_lower(std::string text)
     {
-        std::transform(text.begin(),
-                       text.end(),
-                       text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::transform(
+            text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return text;
     }
 
@@ -173,20 +172,33 @@ namespace
             IO::read_number(para_map, "perturb_center_x_over_d", perturb_center_x_over_d);
             IO::read_number(para_map, "perturb_center_y_over_d", perturb_center_y_over_d);
             IO::read_number(para_map, "perturb_stream_sign", perturb_stream_sign);
+            IO::read_number(para_map, "perturb_after_restart", perturb_after_restart);
             IO::read_number(para_map, "diagnostic_window_half_width_over_d", diagnostic_window_half_width_over_d);
             IO::read_number(para_map, "stagnation_window_half_width_over_d", stagnation_window_half_width_over_d);
             IO::read_number(para_map, "history_output_step", history_output_step);
             IO::read_number(para_map, "postprocess_output_step", postprocess_output_step);
             IO::read_number(para_map, "inlet_flow_bias_alpha", inlet_flow_bias_alpha);
+            IO::read_number(para_map, "steady_stop_enabled", steady_stop_enabled);
+            IO::read_number(para_map, "steady_residual_tol", steady_residual_tol);
+            IO::read_number(para_map, "steady_min_steps", steady_min_steps);
+            IO::read_number(para_map, "steady_converged_hits", steady_converged_hits);
 
             if (perturb_stream_sign == 0)
                 perturb_stream_sign = 1;
+            if (perturb_after_restart != 0 && perturb_after_restart != 1)
+                throw std::runtime_error("perturb_after_restart must be 0 or 1.");
             if (history_output_step <= 0)
                 history_output_step = 1;
             if (postprocess_output_step <= 0)
                 postprocess_output_step = 1;
             if (!std::isfinite(inlet_flow_bias_alpha) || std::abs(inlet_flow_bias_alpha) >= 1.0)
                 throw std::runtime_error("inlet_flow_bias_alpha must be finite and satisfy |alpha| < 1.");
+            if (steady_stop_enabled != 0 && steady_stop_enabled != 1)
+                throw std::runtime_error("steady_stop_enabled must be 0 or 1.");
+            if (!std::isfinite(steady_residual_tol) || steady_residual_tol <= 0.0)
+                throw std::runtime_error("steady_residual_tol must be finite and > 0.");
+            if (steady_min_steps <= 0 || steady_converged_hits <= 0)
+                throw std::runtime_error("steady_min_steps and steady_converged_hits must be positive.");
         }
 
         bool record_paras() override
@@ -200,33 +212,43 @@ namespace
                 .record("perturb_center_x_over_d", perturb_center_x_over_d)
                 .record("perturb_center_y_over_d", perturb_center_y_over_d)
                 .record("perturb_stream_sign", perturb_stream_sign)
+                .record("perturb_after_restart", perturb_after_restart)
                 .record("diagnostic_window_half_width_over_d", diagnostic_window_half_width_over_d)
                 .record("stagnation_window_half_width_over_d", stagnation_window_half_width_over_d)
                 .record("history_output_step", history_output_step)
-                .record("postprocess_output_step", postprocess_output_step);
+                .record("postprocess_output_step", postprocess_output_step)
+                .record("steady_stop_enabled", steady_stop_enabled)
+                .record("steady_residual_tol", steady_residual_tol)
+                .record("steady_min_steps", steady_min_steps)
+                .record("steady_converged_hits", steady_converged_hits);
 
             return true;
         }
 
-        double perturb_eps                        = 1.0e-6;
-        double inlet_flow_bias_alpha              = 0.0;
-        double perturb_sigma_over_d               = 0.25;
-        double perturb_center_x_over_d            = 0.0;
-        double perturb_center_y_over_d            = 0.1;
-        int    perturb_stream_sign                = 1;
-        double diagnostic_window_half_width_over_d = 1.0;
+        double perturb_eps                         = 1.0e-6;
+        double inlet_flow_bias_alpha               = 0.0;
+        double perturb_sigma_over_d                = 0.25;
+        double perturb_center_x_over_d             = 0.1;
+        double perturb_center_y_over_d             = 0.1;
+        int    perturb_stream_sign                 = 1;
+        int    perturb_after_restart               = 0;
+        double diagnostic_window_half_width_over_d = 8.0;
         double stagnation_window_half_width_over_d = 0.5;
         int    history_output_step                 = 50;
         int    postprocess_output_step             = 1;
+        int    steady_stop_enabled                 = 0;
+        double steady_residual_tol                 = 1.0e-8;
+        int    steady_min_steps                    = 10;
+        int    steady_converged_hits               = 5;
     };
 
     struct StabilityMetrics
     {
-        double energy_upper       = 0.0;
-        double energy_lower       = 0.0;
-        double energy_left        = 0.0;
-        double energy_right       = 0.0;
-        double energy_total       = 0.0;
+        double energy_upper        = 0.0;
+        double energy_lower        = 0.0;
+        double energy_left         = 0.0;
+        double energy_right        = 0.0;
+        double energy_total        = 0.0;
         double asymmetry_ud_energy = std::numeric_limits<double>::quiet_NaN();
         double asymmetry_lr_energy = std::numeric_limits<double>::quiet_NaN();
         double stagnation_x_over_d = std::numeric_limits<double>::quiet_NaN();
@@ -317,23 +339,23 @@ namespace
     {
         std::string        name;
         std::string        family;
-        Domain2DUniform*   domain          = nullptr;
-        LocationType       boundary        = LocationType::XNegative;
-        SectionOrientation orientation     = SectionOrientation::Vertical;
-        int                line_index      = 0;
-        int                probe_i         = 0;
-        int                probe_j         = 0;
-        int                probe_i_interp  = 0;
-        int                probe_j_interp  = 0;
-        int                sample_count    = 0;
-        double             spacing         = 0.0;
-        double             section_length  = 0.0;
-        double             outward_sign    = 1.0;
-        double             section_center_x = 0.0;
-        double             section_center_y = 0.0;
-        double             probe_x         = 0.0;
-        double             probe_y         = 0.0;
-        double             probe_interp_weight = 0.0;
+        Domain2DUniform*   domain                = nullptr;
+        LocationType       boundary              = LocationType::XNegative;
+        SectionOrientation orientation           = SectionOrientation::Vertical;
+        int                line_index            = 0;
+        int                probe_i               = 0;
+        int                probe_j               = 0;
+        int                probe_i_interp        = 0;
+        int                probe_j_interp        = 0;
+        int                sample_count          = 0;
+        double             spacing               = 0.0;
+        double             section_length        = 0.0;
+        double             outward_sign          = 1.0;
+        double             section_center_x      = 0.0;
+        double             section_center_y      = 0.0;
+        double             probe_x               = 0.0;
+        double             probe_y               = 0.0;
+        double             probe_interp_weight   = 0.0;
         std::string        probe_sampling_method = "cell_center_exact";
     };
 
@@ -430,36 +452,36 @@ namespace
         const double normalized = (target - origin) / spacing - 0.5;
         if (normalized <= 0.0)
         {
-            interpolation.first_index = 0;
+            interpolation.first_index  = 0;
             interpolation.second_index = 0;
             return interpolation;
         }
         if (normalized >= static_cast<double>(count - 1))
         {
-            interpolation.first_index = count - 1;
+            interpolation.first_index  = count - 1;
             interpolation.second_index = count - 1;
             return interpolation;
         }
 
-        const int lower = static_cast<int>(std::floor(normalized));
+        const int    lower  = static_cast<int>(std::floor(normalized));
         const double weight = normalized - static_cast<double>(lower);
         if (weight <= SMALL_NUMBER)
         {
-            interpolation.first_index = lower;
+            interpolation.first_index  = lower;
             interpolation.second_index = lower;
             return interpolation;
         }
         if (1.0 - weight <= SMALL_NUMBER)
         {
-            interpolation.first_index = lower + 1;
+            interpolation.first_index  = lower + 1;
             interpolation.second_index = lower + 1;
             return interpolation;
         }
 
-        interpolation.first_index = lower;
+        interpolation.first_index  = lower;
         interpolation.second_index = lower + 1;
-        interpolation.weight = weight;
-        interpolation.method = "linear_center_interp";
+        interpolation.weight       = weight;
+        interpolation.method       = "linear_center_interp";
         return interpolation;
     }
 
@@ -485,41 +507,41 @@ namespace
         {
             const CenterInterpolation1D tangent_interp =
                 center_interpolation(domain->get_ny(), domain->get_offset_y(), domain->get_hy(), geometry_center_y);
-            def.orientation      = SectionOrientation::Vertical;
-            def.line_index       = boundary == LocationType::XNegative ? 0 : domain->get_nx() - 1;
-            def.sample_count     = domain->get_ny();
-            def.spacing          = domain->get_hy();
-            def.section_length   = domain->get_ly();
-            def.probe_i          = def.line_index;
-            def.probe_j          = tangent_interp.first_index;
-            def.probe_i_interp   = def.line_index;
-            def.probe_j_interp   = tangent_interp.second_index;
-            def.probe_interp_weight = tangent_interp.weight;
+            def.orientation           = SectionOrientation::Vertical;
+            def.line_index            = boundary == LocationType::XNegative ? 0 : domain->get_nx() - 1;
+            def.sample_count          = domain->get_ny();
+            def.spacing               = domain->get_hy();
+            def.section_length        = domain->get_ly();
+            def.probe_i               = def.line_index;
+            def.probe_j               = tangent_interp.first_index;
+            def.probe_i_interp        = def.line_index;
+            def.probe_j_interp        = tangent_interp.second_index;
+            def.probe_interp_weight   = tangent_interp.weight;
             def.probe_sampling_method = tangent_interp.method;
-            def.section_center_x = boundary_coordinate(*domain, boundary);
-            def.section_center_y = domain->get_offset_y() + 0.5 * domain->get_ly();
-            def.probe_x          = cell_center_x(*domain, def.probe_i);
-            def.probe_y          = def.section_center_y;
+            def.section_center_x      = boundary_coordinate(*domain, boundary);
+            def.section_center_y      = domain->get_offset_y() + 0.5 * domain->get_ly();
+            def.probe_x               = cell_center_x(*domain, def.probe_i);
+            def.probe_y               = def.section_center_y;
         }
         else
         {
             const CenterInterpolation1D tangent_interp =
                 center_interpolation(domain->get_nx(), domain->get_offset_x(), domain->get_hx(), geometry_center_x);
-            def.orientation      = SectionOrientation::Horizontal;
-            def.line_index       = boundary == LocationType::YNegative ? 0 : domain->get_ny() - 1;
-            def.sample_count     = domain->get_nx();
-            def.spacing          = domain->get_hx();
-            def.section_length   = domain->get_lx();
-            def.probe_i          = tangent_interp.first_index;
-            def.probe_j          = def.line_index;
-            def.probe_i_interp   = tangent_interp.second_index;
-            def.probe_j_interp   = def.line_index;
-            def.probe_interp_weight = tangent_interp.weight;
+            def.orientation           = SectionOrientation::Horizontal;
+            def.line_index            = boundary == LocationType::YNegative ? 0 : domain->get_ny() - 1;
+            def.sample_count          = domain->get_nx();
+            def.spacing               = domain->get_hx();
+            def.section_length        = domain->get_lx();
+            def.probe_i               = tangent_interp.first_index;
+            def.probe_j               = def.line_index;
+            def.probe_i_interp        = tangent_interp.second_index;
+            def.probe_j_interp        = def.line_index;
+            def.probe_interp_weight   = tangent_interp.weight;
             def.probe_sampling_method = tangent_interp.method;
-            def.section_center_x = domain->get_offset_x() + 0.5 * domain->get_lx();
-            def.section_center_y = boundary_coordinate(*domain, boundary);
-            def.probe_x          = def.section_center_x;
-            def.probe_y          = cell_center_y(*domain, def.probe_j);
+            def.section_center_x      = domain->get_offset_x() + 0.5 * domain->get_lx();
+            def.section_center_y      = boundary_coordinate(*domain, boundary);
+            def.probe_x               = def.section_center_x;
+            def.probe_y               = cell_center_y(*domain, def.probe_j);
         }
 
         return def;
@@ -530,36 +552,35 @@ namespace
         if (def.domain == nullptr)
             throw std::runtime_error("Null domain in sample_point_probe.");
 
-        const int    nx      = def.domain->get_nx();
-        const int    ny      = def.domain->get_ny();
+        const int     nx      = def.domain->get_nx();
+        const int     ny      = def.domain->get_ny();
         const field2& u_field = *u_var.field_map[def.domain];
         const field2& v_field = *v_var.field_map[def.domain];
 
         PointProbeSample sample;
-        const double u_first = sample_u_center(u_field, nx, ny, def.probe_i, def.probe_j);
-        const double v_first = sample_v_center(v_field, nx, ny, def.probe_i, def.probe_j);
-        const double u_second = sample_u_center(u_field, nx, ny, def.probe_i_interp, def.probe_j_interp);
-        const double v_second = sample_v_center(v_field, nx, ny, def.probe_i_interp, def.probe_j_interp);
-        sample.u = (1.0 - def.probe_interp_weight) * u_first + def.probe_interp_weight * u_second;
-        sample.v = (1.0 - def.probe_interp_weight) * v_first + def.probe_interp_weight * v_second;
+        const double     u_first  = sample_u_center(u_field, nx, ny, def.probe_i, def.probe_j);
+        const double     v_first  = sample_v_center(v_field, nx, ny, def.probe_i, def.probe_j);
+        const double     u_second = sample_u_center(u_field, nx, ny, def.probe_i_interp, def.probe_j_interp);
+        const double     v_second = sample_v_center(v_field, nx, ny, def.probe_i_interp, def.probe_j_interp);
+        sample.u                  = (1.0 - def.probe_interp_weight) * u_first + def.probe_interp_weight * u_second;
+        sample.v                  = (1.0 - def.probe_interp_weight) * v_first + def.probe_interp_weight * v_second;
         return sample;
     }
 
-    SectionAggregateSample sample_section_aggregate(const SectionMonitorDefinition& def,
-                                                    Variable2D&                    u_var,
-                                                    Variable2D&                    v_var)
+    SectionAggregateSample
+    sample_section_aggregate(const SectionMonitorDefinition& def, Variable2D& u_var, Variable2D& v_var)
     {
         if (def.domain == nullptr || def.sample_count <= 0)
             return {};
 
-        const int    nx      = def.domain->get_nx();
-        const int    ny      = def.domain->get_ny();
+        const int     nx      = def.domain->get_nx();
+        const int     ny      = def.domain->get_ny();
         const field2& u_field = *u_var.field_map[def.domain];
         const field2& v_field = *v_var.field_map[def.domain];
 
-        double sum_u      = 0.0;
-        double sum_v      = 0.0;
-        double sum_speed  = 0.0;
+        double sum_u     = 0.0;
+        double sum_v     = 0.0;
+        double sum_speed = 0.0;
 
         if (def.orientation == SectionOrientation::Vertical)
         {
@@ -591,7 +612,7 @@ namespace
         return sample;
     }
 
-    void write_point_probe_metadata(std::ofstream&                              out,
+    void write_point_probe_metadata(std::ofstream&                               out,
                                     const std::vector<SectionMonitorDefinition>& defs,
                                     double                                       geometry_center_x,
                                     double                                       geometry_center_y,
@@ -613,17 +634,16 @@ namespace
 
             out << def.name << "," << def.name << "," << def.family << "," << def.domain->name << ","
                 << location_type_name(def.boundary) << "," << section_orientation_name(def.orientation) << ","
-                << def.probe_i << "," << def.probe_j << ","
-                << def.probe_i_interp << "," << def.probe_j_interp << "," << def.probe_interp_weight << ","
-                << def.probe_sampling_method << "," << def.probe_x << "," << def.probe_y << ","
-                << probe_x_rel << "," << probe_y_rel << "," << probe_x_rel / domain_width << ","
+                << def.probe_i << "," << def.probe_j << "," << def.probe_i_interp << "," << def.probe_j_interp << ","
+                << def.probe_interp_weight << "," << def.probe_sampling_method << "," << def.probe_x << ","
+                << def.probe_y << "," << probe_x_rel << "," << probe_y_rel << "," << probe_x_rel / domain_width << ","
                 << probe_y_rel / domain_width << "," << def.section_center_x << "," << def.section_center_y << ","
                 << section_x_rel << "," << section_y_rel << "," << section_x_rel / domain_width << ","
                 << section_y_rel / domain_width << "\n";
         }
     }
 
-    void write_section_metadata(std::ofstream&                              out,
+    void write_section_metadata(std::ofstream&                               out,
                                 const std::vector<SectionMonitorDefinition>& defs,
                                 double                                       geometry_center_x,
                                 double                                       geometry_center_y,
@@ -644,15 +664,15 @@ namespace
             const double section_x_rel = def.section_center_x - geometry_center_x;
             const double section_y_rel = def.section_center_y - geometry_center_y;
 
-            out << def.name << "," << def.family << "," << def.domain->name << ","
-                << location_type_name(def.boundary) << "," << section_orientation_name(def.orientation) << ","
-                << def.line_index << "," << def.sample_count << "," << def.spacing << "," << def.section_length << ","
-                << def.outward_sign << "," << def.section_center_x << "," << def.section_center_y << ","
-                << section_x_rel << "," << section_y_rel << "," << section_x_rel / domain_width << ","
-                << section_y_rel / domain_width << "," << def.name << "," << def.probe_i << "," << def.probe_j << ","
-                << def.probe_i_interp << "," << def.probe_j_interp << "," << def.probe_interp_weight << ","
-                << def.probe_sampling_method << "," << def.probe_x << "," << def.probe_y << "," << probe_x_rel << "," << probe_y_rel << ","
-                << probe_x_rel / domain_width << "," << probe_y_rel / domain_width << "\n";
+            out << def.name << "," << def.family << "," << def.domain->name << "," << location_type_name(def.boundary)
+                << "," << section_orientation_name(def.orientation) << "," << def.line_index << "," << def.sample_count
+                << "," << def.spacing << "," << def.section_length << "," << def.outward_sign << ","
+                << def.section_center_x << "," << def.section_center_y << "," << section_x_rel << "," << section_y_rel
+                << "," << section_x_rel / domain_width << "," << section_y_rel / domain_width << "," << def.name << ","
+                << def.probe_i << "," << def.probe_j << "," << def.probe_i_interp << "," << def.probe_j_interp << ","
+                << def.probe_interp_weight << "," << def.probe_sampling_method << "," << def.probe_x << ","
+                << def.probe_y << "," << probe_x_rel << "," << probe_y_rel << "," << probe_x_rel / domain_width << ","
+                << probe_y_rel / domain_width << "\n";
         }
     }
 
@@ -676,7 +696,7 @@ namespace
         out << "\n";
     }
 
-    void write_point_probe_row(std::ofstream&                              out,
+    void write_point_probe_row(std::ofstream&                               out,
                                const std::vector<SectionMonitorDefinition>& defs,
                                Variable2D&                                  u_var,
                                Variable2D&                                  v_var,
@@ -693,7 +713,7 @@ namespace
         out << "\n";
     }
 
-    void write_section_integral_row(std::ofstream&                              out,
+    void write_section_integral_row(std::ofstream&                               out,
                                     const std::vector<SectionMonitorDefinition>& defs,
                                     Variable2D&                                  u_var,
                                     Variable2D&                                  v_var,
@@ -757,18 +777,18 @@ namespace
 
     struct StagnationCandidate
     {
-        Domain2DUniform* domain           = nullptr;
-        int              i                = 0;
-        int              j                = 0;
-        int              nx               = 0;
-        int              ny               = 0;
-        double           hx               = 0.0;
-        double           hy               = 0.0;
-        double           x_center         = 0.0;
-        double           y_center         = 0.0;
-        double           speed_sq         = std::numeric_limits<double>::infinity();
-        double           radius_sq        = std::numeric_limits<double>::infinity();
-        bool             valid            = false;
+        Domain2DUniform* domain    = nullptr;
+        int              i         = 0;
+        int              j         = 0;
+        int              nx        = 0;
+        int              ny        = 0;
+        double           hx        = 0.0;
+        double           hy        = 0.0;
+        double           x_center  = 0.0;
+        double           y_center  = 0.0;
+        double           speed_sq  = std::numeric_limits<double>::infinity();
+        double           radius_sq = std::numeric_limits<double>::infinity();
+        bool             valid     = false;
     };
 
     void finalize_stagnation_candidate(const StagnationCandidate& candidate,
@@ -809,11 +829,11 @@ namespace
         }
 
         const double refined_radius_sq = refined_x * refined_x + refined_y * refined_y;
-        metrics.stagnation_x_over_d = refined_x / domain_width;
-        metrics.stagnation_y_over_d = refined_y / domain_width;
-        metrics.stagnation_r_over_d = std::sqrt(refined_radius_sq) / domain_width;
-        metrics.stagnation_speed    = std::sqrt(std::max(candidate.speed_sq, 0.0));
-        metrics.has_stagnation      = true;
+        metrics.stagnation_x_over_d    = refined_x / domain_width;
+        metrics.stagnation_y_over_d    = refined_y / domain_width;
+        metrics.stagnation_r_over_d    = std::sqrt(refined_radius_sq) / domain_width;
+        metrics.stagnation_speed       = std::sqrt(std::max(candidate.speed_sq, 0.0));
+        metrics.has_stagnation         = true;
     }
 
     void apply_local_streamfunction_perturbation(const CrossShapedChannel2DStabilityCase& case_param,
@@ -890,8 +910,8 @@ namespace
     {
         StabilityMetrics metrics;
 
-        const double diag_half_width = case_param.diagnostic_window_half_width_over_d * domain_width;
-        const double stag_half_width = case_param.stagnation_window_half_width_over_d * domain_width;
+        const double        diag_half_width = case_param.diagnostic_window_half_width_over_d * domain_width;
+        const double        stag_half_width = case_param.stagnation_window_half_width_over_d * domain_width;
         StagnationCandidate best_stagnation;
         double              max_speed_window = 0.0;
 
@@ -919,7 +939,7 @@ namespace
 
                     if (std::abs(x_center) <= diag_half_width && std::abs(y_center) <= diag_half_width)
                     {
-                        metrics.has_window  = true;
+                        metrics.has_window = true;
                         metrics.energy_total += speed_sq * area;
                         if (y_center >= 0.0)
                             metrics.energy_upper += speed_sq * area;
@@ -936,11 +956,12 @@ namespace
 
                     if (std::abs(x_center) <= stag_half_width && std::abs(y_center) <= stag_half_width)
                     {
-                        const double radius_sq = x_center * x_center + y_center * y_center;
+                        const double radius_sq    = x_center * x_center + y_center * y_center;
                         const bool   better_speed = speed_sq < best_stagnation.speed_sq - SMALL_NUMBER;
-                        const bool speed_tied = std::abs(speed_sq - best_stagnation.speed_sq) <= SMALL_NUMBER;
+                        const bool   speed_tied   = std::abs(speed_sq - best_stagnation.speed_sq) <= SMALL_NUMBER;
 
-                        if (!best_stagnation.valid || better_speed || (speed_tied && radius_sq < best_stagnation.radius_sq))
+                        if (!best_stagnation.valid || better_speed ||
+                            (speed_tied && radius_sq < best_stagnation.radius_sq))
                         {
                             best_stagnation.domain    = domain;
                             best_stagnation.i         = i;
@@ -962,8 +983,8 @@ namespace
 
         if (metrics.has_window)
         {
-            const double ud_denom = std::max(metrics.energy_upper + metrics.energy_lower, SMALL_NUMBER);
-            const double lr_denom = std::max(metrics.energy_right + metrics.energy_left, SMALL_NUMBER);
+            const double ud_denom       = std::max(metrics.energy_upper + metrics.energy_lower, SMALL_NUMBER);
+            const double lr_denom       = std::max(metrics.energy_right + metrics.energy_left, SMALL_NUMBER);
             metrics.asymmetry_ud_energy = (metrics.energy_upper - metrics.energy_lower) / ud_denom;
             metrics.asymmetry_lr_energy = (metrics.energy_right - metrics.energy_left) / lr_denom;
             metrics.max_speed_window    = max_speed_window;
@@ -981,18 +1002,15 @@ namespace
                        "stagnation_r_over_d,stagnation_speed,max_speed_window\n";
     }
 
-    void write_history_row(std::ofstream&             history_out,
-                           int                        step,
-                           double                     time,
-                           double                     dt,
-                           const StabilityMetrics& metrics)
+    void
+    write_history_row(std::ofstream& history_out, int step, double time, double dt, const StabilityMetrics& metrics)
     {
         history_out << step << "," << time << "," << dt << "," << metrics.energy_upper << "," << metrics.energy_lower
                     << "," << metrics.energy_left << "," << metrics.energy_right << "," << metrics.energy_total << ","
                     << metrics.asymmetry_ud_energy << "," << metrics.asymmetry_lr_energy << ","
                     << metrics.stagnation_x_over_d << "," << metrics.stagnation_y_over_d << ","
-                    << metrics.stagnation_r_over_d << "," << metrics.stagnation_speed << ","
-                    << metrics.max_speed_window << "\n";
+                    << metrics.stagnation_r_over_d << "," << metrics.stagnation_speed << "," << metrics.max_speed_window
+                    << "\n";
     }
 
     double tracked_abs_value(const MaxAbsTracker& tracker)
@@ -1026,7 +1044,9 @@ namespace
                            double                                   final_time,
                            double                                   final_dt,
                            int                                      estimated_total_steps,
-                           const StabilitySummaryAccumulator&       summary_acc)
+                           const StabilitySummaryAccumulator&       summary_acc,
+                           double                                   final_steady_residual,
+                           bool                                     steady_reached)
     {
         std::ofstream out(case_param.root_dir + "/stability_summary.csv");
         if (!out.is_open())
@@ -1041,7 +1061,9 @@ namespace
                "asymmetry_ud_energy_abs_max_time,asymmetry_lr_energy_final,asymmetry_lr_energy_abs_max,"
                "asymmetry_lr_energy_abs_max_step,asymmetry_lr_energy_abs_max_time,stagnation_x_over_d_final,"
                "stagnation_y_over_d_final,stagnation_r_over_d_final,stagnation_r_over_d_max,"
-               "stagnation_r_over_d_max_step,stagnation_r_over_d_max_time,stagnation_speed_final\n";
+               "stagnation_r_over_d_max_step,stagnation_r_over_d_max_time,stagnation_speed_final,"
+               "steady_stop_enabled,steady_residual_tol,steady_min_steps,steady_converged_hits,"
+               "steady_residual_final,steady_reached\n";
 
         const StabilityMetrics final_metrics =
             summary_acc.has_last_metrics ? summary_acc.last_metrics : StabilityMetrics {};
@@ -1053,14 +1075,16 @@ namespace
             << case_param.perturb_center_y_over_d << "," << case_param.diagnostic_window_half_width_over_d << ","
             << case_param.stagnation_window_half_width_over_d << "," << final_metrics.asymmetry_ud_energy << ","
             << tracked_abs_value(summary_acc.asymmetry_ud_abs_max) << ","
-            << tracked_step(summary_acc.asymmetry_ud_abs_max) << ","
-            << tracked_time(summary_acc.asymmetry_ud_abs_max) << "," << final_metrics.asymmetry_lr_energy << ","
-            << tracked_abs_value(summary_acc.asymmetry_lr_abs_max) << ","
-            << tracked_step(summary_acc.asymmetry_lr_abs_max) << ","
+            << tracked_step(summary_acc.asymmetry_ud_abs_max) << "," << tracked_time(summary_acc.asymmetry_ud_abs_max)
+            << "," << final_metrics.asymmetry_lr_energy << "," << tracked_abs_value(summary_acc.asymmetry_lr_abs_max)
+            << "," << tracked_step(summary_acc.asymmetry_lr_abs_max) << ","
             << tracked_time(summary_acc.asymmetry_lr_abs_max) << "," << final_metrics.stagnation_x_over_d << ","
             << final_metrics.stagnation_y_over_d << "," << final_metrics.stagnation_r_over_d << ","
             << tracked_value(summary_acc.stagnation_r_max) << "," << tracked_step(summary_acc.stagnation_r_max) << ","
-            << tracked_time(summary_acc.stagnation_r_max) << "," << final_metrics.stagnation_speed << "\n";
+            << tracked_time(summary_acc.stagnation_r_max) << "," << final_metrics.stagnation_speed << ","
+            << case_param.steady_stop_enabled << "," << case_param.steady_residual_tol << ","
+            << case_param.steady_min_steps << "," << case_param.steady_converged_hits << "," << final_steady_residual
+            << "," << (steady_reached ? 1 : 0) << "\n";
     }
 
     bool representative_value_is_finite(const field2& field)
@@ -1071,6 +1095,35 @@ namespace
         const int i = std::min(1, field.get_nx() - 1);
         const int j = std::min(1, field.get_ny() - 1);
         return std::isfinite(field(i, j));
+    }
+
+    void initialize_previous_field_map(Variable2D&                                   var,
+                                       std::unordered_map<Domain2DUniform*, field2>& previous,
+                                       const std::string&                            prefix)
+    {
+        for (auto* domain : var.geometry->domains)
+        {
+            field2& current = *var.field_map.at(domain);
+            field2& prior   = previous[domain];
+            prior.init(current.get_nx(), current.get_ny(), prefix + "_" + domain->name);
+            prior = current;
+        }
+    }
+
+    double compute_relative_field_update(Variable2D& var, std::unordered_map<Domain2DUniform*, field2>& previous)
+    {
+        double diff_sq = 0.0;
+        double norm_sq = 0.0;
+        for (auto* domain : var.geometry->domains)
+        {
+            field2& current = *var.field_map.at(domain);
+            field2& prior   = previous.at(domain);
+            field2  diff    = current - prior;
+            diff_sq += diff.squared_sum();
+            norm_sq += current.squared_sum();
+        }
+
+        return std::sqrt(diff_sq / std::max(norm_sq, SMALL_NUMBER));
     }
 } // namespace
 
@@ -1086,7 +1139,7 @@ int main(int argc, char* argv[])
     const bool                 enable_scalar_transport = Sc > 0.0;
     const double               Pe                      = enable_scalar_transport ? case_param.Re * Sc : 0.0;
     const double               nr                      = enable_scalar_transport ? 1.0 / Pe : 0.0;
-    const DifferenceSchemeType scalar_scheme          = parse_scalar_scheme(scalar_scheme_name);
+    const DifferenceSchemeType scalar_scheme           = parse_scalar_scheme(scalar_scheme_name);
     if (enable_scalar_transport && Pe <= 0.0)
         throw std::runtime_error("Scalar transport requires Re * Sc > 0");
 
@@ -1247,13 +1300,14 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    const int history_output_step      = std::max(1, case_param.history_output_step);
-    const int postprocess_output_step  = std::max(1, case_param.postprocess_output_step);
-    constexpr int auto_pv_output_count = 100;
-    const int pv_output_step           = case_param.pv_output_step > 0
-                                             ? case_param.pv_output_step
-                                             : std::max(1, estimated_total_steps / auto_pv_output_count);
-    const int final_step_to_save = case_param.step_to_save > 0 ? case_param.step_to_save : estimated_total_steps;
+    const int     history_output_step     = std::max(1, case_param.history_output_step);
+    const int     postprocess_output_step = std::max(1, case_param.postprocess_output_step);
+    constexpr int auto_pv_output_count    = 100;
+    const int     pv_output_step          = case_param.pv_output_step > 0 ?
+                                                case_param.pv_output_step :
+                                                std::max(1, estimated_total_steps / auto_pv_output_count);
+    const int     requested_step_to_save  = case_param.step_to_save;
+    const int     final_step_to_save      = requested_step_to_save > 0 ? requested_step_to_save : estimated_total_steps;
 
     case_param.max_step     = estimated_total_steps;
     case_param.step_to_save = final_step_to_save;
@@ -1544,11 +1598,21 @@ int main(int argc, char* argv[])
     {
         std::cout << "Warm-start from final field: source=" << restart_info.source_root
                   << ", step=" << restart_info.step << std::endl;
-        CrossSlotRestart::warm_start_from_final_field(
-            restart_info, u, v, p, enable_mhd ? &phi : nullptr, enable_scalar_transport ? &c : nullptr);
+        CrossSlotRestart::warm_start_from_final_field(restart_info,
+                                                      u,
+                                                      v,
+                                                      p,
+                                                      enable_mhd ? &phi : nullptr,
+                                                      enable_scalar_transport ? &c : nullptr,
+                                                      &mu,
+                                                      &tau_xx,
+                                                      &tau_yy,
+                                                      &tau_xy);
     }
-    else
+    if (!restart_info.enabled || case_param.perturb_after_restart != 0)
     {
+        if (restart_info.enabled)
+            std::cout << "Applying post-restart local streamfunction perturbation." << std::endl;
         apply_local_streamfunction_perturbation(
             case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
     }
@@ -1562,22 +1626,57 @@ int main(int argc, char* argv[])
     }
 
     const std::vector<SectionMonitorDefinition> section_monitors = {
-        build_section_monitor(
-            "center_left", "center_interface", &A1, LocationType::XPositive, -1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "center_right", "center_interface", &A3, LocationType::XNegative, 1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "center_bottom", "center_interface", &A4, LocationType::YPositive, -1.0, geometry_center_x, geometry_center_y),
+        build_section_monitor("center_left",
+                              "center_interface",
+                              &A1,
+                              LocationType::XPositive,
+                              -1.0,
+                              geometry_center_x,
+                              geometry_center_y),
+        build_section_monitor("center_right",
+                              "center_interface",
+                              &A3,
+                              LocationType::XNegative,
+                              1.0,
+                              geometry_center_x,
+                              geometry_center_y),
+        build_section_monitor("center_bottom",
+                              "center_interface",
+                              &A4,
+                              LocationType::YPositive,
+                              -1.0,
+                              geometry_center_x,
+                              geometry_center_y),
         build_section_monitor(
             "center_top", "center_interface", &A5, LocationType::YNegative, 1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "physical_left", "physical_boundary", &A1, LocationType::XNegative, -1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "physical_right", "physical_boundary", &A3, LocationType::XPositive, 1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "physical_bottom", "physical_boundary", &A4, LocationType::YNegative, -1.0, geometry_center_x, geometry_center_y),
-        build_section_monitor(
-            "physical_top", "physical_boundary", &A5, LocationType::YPositive, 1.0, geometry_center_x, geometry_center_y),
+        build_section_monitor("physical_left",
+                              "physical_boundary",
+                              &A1,
+                              LocationType::XNegative,
+                              -1.0,
+                              geometry_center_x,
+                              geometry_center_y),
+        build_section_monitor("physical_right",
+                              "physical_boundary",
+                              &A3,
+                              LocationType::XPositive,
+                              1.0,
+                              geometry_center_x,
+                              geometry_center_y),
+        build_section_monitor("physical_bottom",
+                              "physical_boundary",
+                              &A4,
+                              LocationType::YNegative,
+                              -1.0,
+                              geometry_center_x,
+                              geometry_center_y),
+        build_section_monitor("physical_top",
+                              "physical_boundary",
+                              &A5,
+                              LocationType::YPositive,
+                              1.0,
+                              geometry_center_x,
+                              geometry_center_y),
     };
 
     const std::string postprocess_dir = case_param.root_dir + "/postProcessing";
@@ -1617,11 +1716,37 @@ int main(int argc, char* argv[])
     stability_history << std::setprecision(16);
     write_history_header(stability_history);
 
+    std::ofstream steady_history;
+    if (case_param.steady_stop_enabled != 0)
+    {
+        steady_history.open(case_param.root_dir + "/steady_history.csv");
+        if (!steady_history.is_open())
+            throw std::runtime_error("Failed to open steady_history.csv for writing.");
+        steady_history << std::setprecision(16) << "step,time,dt,u_residual,v_residual,max_residual,converged_hits\n";
+    }
+
     StabilitySummaryAccumulator summary_accumulator;
     const StabilityMetrics      initial_metrics =
         compute_stability_metrics(case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
+
+    std::unordered_map<Domain2DUniform*, field2> previous_u_fields;
+    std::unordered_map<Domain2DUniform*, field2> previous_v_fields;
+    if (case_param.steady_stop_enabled != 0)
+    {
+        initialize_previous_field_map(u, previous_u_fields, "steady_previous_u");
+        initialize_previous_field_map(v, previous_v_fields, "steady_previous_v");
+        std::cout << "Steady-stop enabled: tol=" << case_param.steady_residual_tol
+                  << ", min_steps=" << case_param.steady_min_steps
+                  << ", converged_hits=" << case_param.steady_converged_hits << std::endl;
+    }
+
+    double steady_residual_final = std::numeric_limits<double>::infinity();
+    int    steady_hits           = 0;
+    bool   steady_reached        = false;
     write_history_row(stability_history, 0, 0.0, time_cfg.dt, initial_metrics);
     stability_history.flush();
+    if (case_param.steady_stop_enabled != 0)
+        steady_history << 0 << ",0," << time_cfg.dt << ",inf,inf,inf,0\n";
     summary_accumulator.update(initial_metrics, 0, 0.0);
     write_point_probe_row(point_probes, section_monitors, u, v, 0, 0.0, time_cfg.dt);
     write_section_integral_row(section_integrals, section_monitors, u, v, 0, 0.0, time_cfg.dt);
@@ -1630,10 +1755,10 @@ int main(int argc, char* argv[])
 
     std::cout << "Starting MHD + Non-Newtonian stability simulation..." << std::endl;
 
-    double current_time = 0.0;
-    double last_dt      = time_cfg.dt;
-    int    step         = 0;
-    bool   diverged     = false;
+    double current_time          = 0.0;
+    double last_dt               = time_cfg.dt;
+    int    step                  = 0;
+    bool   diverged              = false;
     int    last_postprocess_step = 0;
 
     auto sync_boundaries = [&]() {
@@ -1689,6 +1814,42 @@ int main(int argc, char* argv[])
             break;
         }
 
+        if (case_param.steady_stop_enabled != 0)
+        {
+            const double u_residual = compute_relative_field_update(u, previous_u_fields);
+            const double v_residual = compute_relative_field_update(v, previous_v_fields);
+            steady_residual_final   = std::max(u_residual, v_residual);
+
+            if (step >= case_param.steady_min_steps && steady_residual_final < case_param.steady_residual_tol)
+                ++steady_hits;
+            else
+                steady_hits = 0;
+
+            if (step <= 5 || step % history_output_step == 0 || steady_hits >= case_param.steady_converged_hits)
+            {
+                std::cout << "steady step=" << step << ", residual(u,v,max)=(" << u_residual << "," << v_residual << ","
+                          << steady_residual_final << "), hits=" << steady_hits << "/"
+                          << case_param.steady_converged_hits << std::endl;
+            }
+            steady_history << step << "," << current_time << "," << dt_step << "," << u_residual << "," << v_residual
+                           << "," << steady_residual_final << "," << steady_hits << "\n";
+            steady_history.flush();
+
+            for (auto* domain : u.geometry->domains)
+            {
+                previous_u_fields.at(domain) = *u.field_map.at(domain);
+                previous_v_fields.at(domain) = *v.field_map.at(domain);
+            }
+
+            if (steady_hits >= case_param.steady_converged_hits)
+            {
+                steady_reached = true;
+                std::cout << "Steady state reached at step=" << step << ", residual=" << steady_residual_final
+                          << std::endl;
+                break;
+            }
+        }
+
         const bool need_postprocess_output = (step % postprocess_output_step == 0);
         const bool need_pv_output          = (step % pv_output_step == 0);
         const bool need_history_output     = (step % history_output_step == 0);
@@ -1725,8 +1886,8 @@ int main(int argc, char* argv[])
 
         if (need_history_output)
         {
-            const StabilityMetrics metrics =
-                compute_stability_metrics(case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
+            const StabilityMetrics metrics = compute_stability_metrics(
+                case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
             write_history_row(stability_history, step, current_time, dt_step, metrics);
             stability_history.flush();
             summary_accumulator.update(metrics, step, current_time);
@@ -1741,8 +1902,8 @@ int main(int argc, char* argv[])
 
         if (summary_accumulator.last_recorded_step != step)
         {
-            const StabilityMetrics final_metrics =
-                compute_stability_metrics(case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
+            const StabilityMetrics final_metrics = compute_stability_metrics(
+                case_param, u, v, reference_domain_width, geometry_center_x, geometry_center_y);
             write_history_row(stability_history, step, current_time, last_dt, final_metrics);
             stability_history.flush();
             summary_accumulator.update(final_metrics, step, current_time);
@@ -1754,13 +1915,16 @@ int main(int argc, char* argv[])
             write_section_integral_row(section_integrals, section_monitors, u, v, step, current_time, last_dt);
         }
 
-        const int runtime_final_step = case_param.step_to_save > 0 ? case_param.step_to_save : step;
+        const int runtime_final_step = requested_step_to_save > 0 ? requested_step_to_save : step;
         ns_solver.raw_vorticity_update(vorticity);
         IO::write_csv(u, case_param.root_dir + "/final/u_" + std::to_string(runtime_final_step));
         IO::write_csv(v, case_param.root_dir + "/final/v_" + std::to_string(runtime_final_step));
         IO::write_csv(vorticity, case_param.root_dir + "/final/vorticity_" + std::to_string(runtime_final_step));
         IO::write_csv(p, case_param.root_dir + "/final/p_" + std::to_string(runtime_final_step));
         IO::write_csv(mu, case_param.root_dir + "/final/mu_" + std::to_string(runtime_final_step));
+        IO::write_csv(tau_xx, case_param.root_dir + "/final/tau_xx_" + std::to_string(runtime_final_step));
+        IO::write_csv(tau_yy, case_param.root_dir + "/final/tau_yy_" + std::to_string(runtime_final_step));
+        IO::write_csv(tau_xy, case_param.root_dir + "/final/tau_xy_" + std::to_string(runtime_final_step));
         if (enable_mhd)
             IO::write_csv(phi, case_param.root_dir + "/final/phi_" + std::to_string(runtime_final_step));
         if (enable_scalar_transport)
@@ -1770,8 +1934,16 @@ int main(int argc, char* argv[])
     point_probes.flush();
     section_integrals.flush();
 
-    write_summary_csv(
-        case_param, run_status, diverged, step, current_time, last_dt, estimated_total_steps, summary_accumulator);
+    write_summary_csv(case_param,
+                      run_status,
+                      diverged,
+                      step,
+                      current_time,
+                      last_dt,
+                      estimated_total_steps,
+                      summary_accumulator,
+                      steady_residual_final,
+                      steady_reached);
     std::cout << "Simulation finished with run_status=" << run_status << std::endl;
 
     return diverged ? -1 : 0;

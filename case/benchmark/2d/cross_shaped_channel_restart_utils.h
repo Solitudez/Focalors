@@ -13,10 +13,10 @@ namespace CrossSlotRestart
 {
     struct FinalFieldRestartInfo
     {
-        bool        enabled    = false;
+        bool        enabled = false;
         std::string source_root;
         std::string final_dir;
-        int         step       = 0;
+        int         step = 0;
     };
 
     inline bool has_restart_request(const CaseBase& case_param)
@@ -32,8 +32,8 @@ namespace CrossSlotRestart
         if (source_path.filename() == "final" && fs::is_directory(source_path))
             return source_path;
 
-        throw std::runtime_error("Restart source must be a run root containing final/ or the final/ directory itself: " +
-                                 source_root);
+        throw std::runtime_error(
+            "Restart source must be a run root containing final/ or the final/ directory itself: " + source_root);
     }
 
     inline int detect_latest_final_step(const fs::path& final_dir, const std::string& primary_var = "u")
@@ -46,7 +46,7 @@ namespace CrossSlotRestart
             if (!entry.is_regular_file())
                 continue;
 
-            std::smatch match;
+            std::smatch       match;
             const std::string name = entry.path().filename().string();
             if (!std::regex_match(name, match, pattern))
                 continue;
@@ -60,7 +60,7 @@ namespace CrossSlotRestart
         return latest_step;
     }
 
-    inline FinalFieldRestartInfo resolve_final_field_restart(const CaseBase& case_param,
+    inline FinalFieldRestartInfo resolve_final_field_restart(const CaseBase&    case_param,
                                                              const std::string& primary_var = "u")
     {
         FinalFieldRestartInfo info;
@@ -68,8 +68,8 @@ namespace CrossSlotRestart
             return info;
 
         const fs::path final_dir = resolve_final_dir(case_param.savepoint_root_to_read);
-        const int      step      = case_param.step_to_read > 0 ? case_param.step_to_read
-                                                               : detect_latest_final_step(final_dir, primary_var);
+        const int      step =
+            case_param.step_to_read > 0 ? case_param.step_to_read : detect_latest_final_step(final_dir, primary_var);
 
         const fs::path probe = final_dir / (primary_var + "_" + std::to_string(step) + "_A1.csv");
         if (!fs::exists(probe))
@@ -94,8 +94,12 @@ namespace CrossSlotRestart
                                             Variable2D&                  u,
                                             Variable2D&                  v,
                                             Variable2D&                  p,
-                                            Variable2D*                  phi = nullptr,
-                                            Variable2D*                  c   = nullptr)
+                                            Variable2D*                  phi    = nullptr,
+                                            Variable2D*                  c      = nullptr,
+                                            Variable2D*                  mu     = nullptr,
+                                            Variable2D*                  tau_xx = nullptr,
+                                            Variable2D*                  tau_yy = nullptr,
+                                            Variable2D*                  tau_xy = nullptr)
     {
         if (!info.enabled)
             return;
@@ -121,5 +125,23 @@ namespace CrossSlotRestart
             if (fs::exists(c_probe) && !IO::read_csv(*c, info.final_dir + "/c_" + step_tag))
                 throw std::runtime_error("Failed to load restart scalar c from " + info.final_dir);
         }
+
+        if (mu != nullptr)
+        {
+            const fs::path mu_probe = fs::path(info.final_dir) / ("mu_" + step_tag + "_A1.csv");
+            if (fs::exists(mu_probe) && !IO::read_csv(*mu, info.final_dir + "/mu_" + step_tag))
+                throw std::runtime_error("Failed to load restart viscosity mu from " + info.final_dir);
+        }
+
+        auto load_optional_field = [&](Variable2D* variable, const std::string& name) {
+            if (variable == nullptr)
+                return;
+            const fs::path probe = fs::path(info.final_dir) / (name + "_" + step_tag + "_A1.csv");
+            if (fs::exists(probe) && !IO::read_csv(*variable, info.final_dir + "/" + name + "_" + step_tag))
+                throw std::runtime_error("Failed to load restart field " + name + " from " + info.final_dir);
+        };
+        load_optional_field(tau_xx, "tau_xx");
+        load_optional_field(tau_yy, "tau_yy");
+        load_optional_field(tau_xy, "tau_xy");
     }
 } // namespace CrossSlotRestart
