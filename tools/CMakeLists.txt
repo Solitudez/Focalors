@@ -1,0 +1,2 @@
+add_executable(cross_channel_quarter_mirror cross_channel_quarter_mirror.cpp)
+target_link_libraries(cross_channel_quarter_mirror PRIVATE Solver)

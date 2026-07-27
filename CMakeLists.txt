@@ -87,5 +87,5 @@ vtk_module_autoinit(
 # -----------------------------------------------------------------------------------------
 
 add_subdirectory(case)
-
+add_subdirectory(tools)
 
