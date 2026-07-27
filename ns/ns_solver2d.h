@@ -149,6 +149,9 @@ public:
                                      const Variable2D& v_var,
                                      Variable2D&       vorticity_var);
 
+private:
+    void neumann_corner_closure_update();
+
 protected:
     std::vector<Domain2DUniform*>                                                            domains;
     std::unordered_map<Domain2DUniform*, std::unordered_map<LocationType, Domain2DUniform*>> adjacency;

@@ -242,4 +242,25 @@ void ConcatNSSolver2D::diag_shared_boundary_update()
             }
         }
     }
+
+    neumann_corner_closure_update();
+}
+
+void ConcatNSSolver2D::neumann_corner_closure_update()
+{
+    // Close the two MAC corners that are not stored in the face fields.  A
+    // zero-normal-gradient tangential velocity on a symmetry boundary must
+    // copy the value already reconstructed on the orthogonal boundary.  This
+    // also covers a physical symmetry boundary meeting a shared interface.
+    for (auto& domain : domains)
+    {
+        const auto& u_types = u_var->boundary_type_map[domain];
+        const auto& v_types = v_var->boundary_type_map[domain];
+
+        if (v_types.at(LocationType::XNegative) == PDEBoundaryType::Neumann)
+            xneg_ypos_corner_map[domain] = v_buffer_map[domain][LocationType::YPositive][0];
+
+        if (u_types.at(LocationType::YNegative) == PDEBoundaryType::Neumann)
+            xpos_yneg_corner_map[domain] = u_buffer_map[domain][LocationType::XPositive][0];
+    }
 }

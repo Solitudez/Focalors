@@ -39,7 +39,6 @@ namespace
         }
     };
 
-
     /**
      * @brief Average duplicated corner-field values on all shared interfaces.
      */
@@ -289,6 +288,33 @@ void ConcatNSSolver2D::viscosity_update()
         double* v_yneg_buffer = v_buffer_map[domain][LocationType::YNegative];
         double* v_ypos_buffer = v_buffer_map[domain][LocationType::YPositive];
 
+        auto has_zero_boundary_value =
+            [](Variable2D* variable, Domain2DUniform* current_domain, LocationType location, int count) {
+                const auto has_domain_it = variable->has_boundary_value_map.find(current_domain);
+                if (has_domain_it == variable->has_boundary_value_map.end())
+                    return true;
+                const auto has_location_it = has_domain_it->second.find(location);
+                if (has_location_it == has_domain_it->second.end() || !has_location_it->second)
+                    return true;
+
+                const double* values = variable->boundary_value_map.at(current_domain).at(location);
+                for (int index = 0; index < count; ++index)
+                    if (values[index] != 0.0)
+                        return false;
+                return true;
+            };
+
+        const bool x_symmetry =
+            u_var->boundary_type_map[domain][LocationType::XNegative] == PDEBoundaryType::Dirichlet &&
+            v_var->boundary_type_map[domain][LocationType::XNegative] == PDEBoundaryType::Neumann &&
+            has_zero_boundary_value(u_var, domain, LocationType::XNegative, ny) &&
+            has_zero_boundary_value(v_var, domain, LocationType::XNegative, ny);
+        const bool y_symmetry =
+            u_var->boundary_type_map[domain][LocationType::YNegative] == PDEBoundaryType::Neumann &&
+            v_var->boundary_type_map[domain][LocationType::YNegative] == PDEBoundaryType::Dirichlet &&
+            has_zero_boundary_value(u_var, domain, LocationType::YNegative, nx) &&
+            has_zero_boundary_value(v_var, domain, LocationType::YNegative, nx);
+
         // Helper to get u at (i, j) handling boundaries
         // u is defined at (i, j+0.5) for i in [0, nx], j in [-1, ny]
         auto get_u = [&](int i, int j) -> double {
@@ -324,9 +350,13 @@ void ConcatNSSolver2D::viscosity_update()
             if (i_idx > 0 && i_idx < nx)
                 return (get_u(i_idx + 1, j_idx) - get_u(i_idx - 1, j_idx)) / (2.0 * hx);
             else if (i_idx == 0)
+            {
+                if (x_symmetry)
+                    return get_u(1, j_idx) / hx;
                 return (-3 * get_u(0, j_idx) + 4 * get_u(1, j_idx) - get_u(2, j_idx)) /
                        (2.0 * hx); // Forward difference at 2 order accuaracy
-            else                   // i_idx == nx
+            }
+            else // i_idx == nx
                 return (3 * get_u(nx, j_idx) - 4 * get_u(nx - 1, j_idx) + get_u(nx - 2, j_idx)) /
                        (2.0 * hx); // Backward difference at 2 order accuaracy
         };
@@ -336,9 +366,13 @@ void ConcatNSSolver2D::viscosity_update()
             if (j_idx > 0 && j_idx < ny)
                 return (get_v(i_idx, j_idx + 1) - get_v(i_idx, j_idx - 1)) / (2.0 * hy);
             else if (j_idx == 0)
+            {
+                if (y_symmetry)
+                    return get_v(i_idx, 1) / hy;
                 return (-3 * get_v(i_idx, 0) + 4 * get_v(i_idx, 1) - get_v(i_idx, 2)) /
                        (2.0 * hy); // Forward difference at 2 order accuaracy
-            else                   // j_idx == ny
+            }
+            else // j_idx == ny
                 return (3 * get_v(i_idx, ny) - 4 * get_v(i_idx, ny - 1) + get_v(i_idx, ny - 2)) /
                        (2.0 * hy); // Backward difference at 2 order accuaracy
         };
